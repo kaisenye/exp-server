@@ -16,7 +16,7 @@ gem "devise"
 gem "devise-jwt"
 
 # Plaid API for bank account integration
-gem "plaid", "~> 13.0"
+gem "plaid", "~> 41.0"
 
 # Use Active Model has_secure_password [https://guides.rubyonrails.org/active_model_basics.html#securepassword]
 gem "bcrypt", "~> 3.1.7"
