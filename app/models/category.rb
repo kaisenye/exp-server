@@ -1,10 +1,10 @@
 class Category < ApplicationRecord
   # Relationships
   belongs_to :user
-  belongs_to :parent, class_name: "Category", optional: true
-  has_many :children, class_name: "Category", foreign_key: "parent_id", dependent: :destroy
+  belongs_to :parent_category, class_name: "Category", foreign_key: "parent_id", optional: true
+  has_many :subcategories, class_name: "Category", foreign_key: "parent_id"
   has_many :transaction_classifications, dependent: :destroy
-  has_many :transactions, through: :transaction_classifications
+  has_many :transactions, through: :transaction_classifications, source: :expense_transaction
 
   # Validations
   validates :name, presence: true, uniqueness: { scope: :user_id }
@@ -16,7 +16,7 @@ class Category < ApplicationRecord
 
   # Instance methods
   def has_children?
-    children.any?
+    subcategories.any?
   end
 
   def total_spent_this_month
@@ -46,6 +46,6 @@ class Category < ApplicationRecord
   end
 
   def full_name
-    parent ? "#{parent.name} > #{name}" : name
+    parent_category ? "#{parent_category.name} > #{name}" : name
   end
 end

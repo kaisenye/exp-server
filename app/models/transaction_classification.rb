@@ -4,18 +4,28 @@ class TransactionClassification < ApplicationRecord
   belongs_to :category
 
   # Validations
-  validates :confidence_score, presence: true,
-            numericality: { greater_than_or_equal_to: 0, less_than_or_equal_to: 1 }
-  validates :transaction_id, uniqueness: { scope: :category_id }
+  validates :confidence_score, presence: true, inclusion: { in: 0.0..1.0 }
+  validates :transaction_id, presence: true, uniqueness: true
 
   # Scopes
-  scope :auto_classified, -> { where(auto_classified: true) }
-  scope :manually_classified, -> { where(auto_classified: false) }
+  scope :auto_classified, -> { where(is_auto_classified: true) }
+  scope :manual, -> { where(is_auto_classified: false) }
   scope :high_confidence, -> { where("confidence_score >= ?", 0.8) }
   scope :low_confidence, -> { where("confidence_score < ?", 0.5) }
 
   # Instance methods
   def confidence_percentage
     (confidence_score * 100).round(1)
+  end
+
+  def confidence_level
+    case confidence_score
+    when 0.8..1.0
+      "high"
+    when 0.5...0.8
+      "medium"
+    else
+      "low"
+    end
   end
 end

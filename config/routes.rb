@@ -25,6 +25,33 @@ Rails.application.routes.draw do
         get "me", to: "users#show"
       end
 
+      # Accounts API
+      resources :accounts do
+        member do
+          post :sync
+        end
+      end
+
+      # Transactions API
+      resources :transactions, only: [ :index, :show ] do
+        collection do
+          post :sync
+          get :uncategorized
+          get "by_category/:category_id", to: "transactions#by_category", as: :by_category
+        end
+        member do
+          put :categorize
+        end
+      end
+
+      # Categories API
+      resources :categories do
+        collection do
+          get :budget_overview
+          get :spending_analysis
+        end
+      end
+
       # Add more API endpoints here
     end
   end
