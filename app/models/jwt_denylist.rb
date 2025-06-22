@@ -1,7 +1,7 @@
 class JwtDenylist < ApplicationRecord
   include Devise::JWT::RevocationStrategies::Denylist
 
-  self.table_name = "jwt_denylist"
+  self.table_name = "jwt_denylists"
 
   # Validations
   validates :jti, presence: true, uniqueness: true

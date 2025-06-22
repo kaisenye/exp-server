@@ -1,10 +1,11 @@
 class Api::V1::HealthController < ApplicationController
+  skip_before_action :authenticate_user!
+
   def index
     render json: {
-      status: "OK",
-      timestamp: Time.current.iso8601,
-      version: "1.0.0",
-      environment: Rails.env
+      status: "ok",
+      message: "API is healthy",
+      timestamp: Time.current
     }
   end
 end

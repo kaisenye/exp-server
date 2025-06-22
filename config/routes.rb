@@ -1,5 +1,4 @@
 Rails.application.routes.draw do
-  devise_for :users
   # Define your application routes per the DSL in https://guides.rubyonrails.org/routing.html
 
   # Reveal health status on /up that returns 200 if the app boots with no exceptions, otherwise 500.
@@ -17,6 +16,15 @@ Rails.application.routes.draw do
   namespace :api do
     namespace :v1 do
       get "health", to: "health#index"
+
+      # Authentication routes
+      namespace :auth do
+        post "login", to: "sessions#create"
+        delete "logout", to: "sessions#destroy"
+        post "register", to: "registrations#create"
+        get "me", to: "users#show"
+      end
+
       # Add more API endpoints here
     end
   end
