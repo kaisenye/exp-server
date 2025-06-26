@@ -56,6 +56,111 @@ A Ruby on Rails API-only backend for personal expense tracking with Plaid integr
    bin/rails server
    ```
 
+## 🐳 Docker Setup
+
+### Prerequisites
+
+- Docker and Docker Compose installed
+
+### Environment Setup
+
+1. **Create environment file**
+   ```bash
+   cp .env.example .env
+   ```
+
+2. **Update your `.env` file with your credentials:**
+   ```bash
+   # Plaid API (required for bank integration)
+   PLAID_CLIENT_ID=your_plaid_client_id
+   PLAID_SECRET=your_plaid_secret
+   PLAID_ENV=sandbox
+
+   # Security (generate secure keys)
+   DEVISE_JWT_SECRET_KEY=your_jwt_secret_key_here
+   ENCRYPTION_KEY=your_32_character_encryption_key
+
+   # Optional
+   FRONTEND_URL=http://localhost:3001
+   ```
+
+### Quick Start with Docker
+
+**Production Setup:**
+```bash
+# Start all services (PostgreSQL, Redis, Rails)
+docker-compose up -d
+
+# Your API will be available at http://localhost:3000
+```
+
+**Development Setup (with hot reloading):**
+```bash
+# Start development environment
+docker-compose --profile dev up -d
+
+# Or start just the services you need
+docker-compose up -d db redis web-dev
+```
+
+**With Background Jobs:**
+```bash
+# Include Sidekiq for background processing
+docker-compose --profile sidekiq up -d
+```
+
+### Docker Commands
+
+```bash
+# Build and start services
+docker compose up -d
+
+# View logs
+docker compose logs -f web
+
+# Stop services
+docker compose down
+
+# Rebuild after changes
+docker compose build
+docker compose up -d
+
+# Run Rails commands
+docker compose exec web bundle exec rails console
+docker compose exec web bundle exec rails db:migrate
+
+# Access database directly
+docker compose exec db psql -U postgres expense_tracker_development
+```
+
+### Available Services
+
+| Service | Description | Port | Profile |
+|---------|-------------|------|---------|
+| `db` | PostgreSQL database | 5432 | default |
+| `redis` | Redis for background jobs | 6379 | default |
+| `web` | Rails app (production) | 3000→80 | default |
+| `web-dev` | Rails app (development) | 3000 | dev |
+| `sidekiq` | Background job processor | - | sidekiq |
+
+### Docker Development Workflow
+
+1. **Make code changes** - Files are automatically synced in development mode
+2. **Database migrations:**
+   ```bash
+   docker-compose exec web-dev bundle exec rails db:migrate
+   ```
+3. **Add new gems:**
+   ```bash
+   # After updating Gemfile
+   docker-compose build web-dev
+   docker-compose up -d web-dev
+   ```
+4. **Reset database:**
+   ```bash
+   docker-compose exec web-dev bundle exec rails db:drop db:create db:migrate db:seed
+   ```
+
 ### Environment Variables
 
 Create a `.env` file with:

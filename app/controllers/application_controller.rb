@@ -27,8 +27,21 @@ class ApplicationController < ActionController::API
       @current_user = User.find(jwt_payload["sub"])
     rescue JWT::ExpiredSignature
       render json: { error: "Token has expired" }, status: :unauthorized
-    rescue JWT::DecodeError, ActiveRecord::RecordNotFound
-      unauthorized
+    rescue JWT::DecodeError, ActiveRecord::RecordNotFound => e
+      # Handle case where token was created with an invalid/short key
+      if e.message.include?("key must be 32 bytes or longer")
+        render json: { error: "Invalid token - please login again" }, status: :unauthorized
+      else
+        unauthorized
+      end
+    rescue StandardError => e
+      # Catch any other JWT-related errors (including key length issues)
+      if e.message.include?("key must be 32 bytes or longer")
+        render json: { error: "Invalid token - please login again" }, status: :unauthorized
+      else
+        Rails.logger.error "JWT authentication error: #{e.message}"
+        unauthorized
+      end
     end
   end
 

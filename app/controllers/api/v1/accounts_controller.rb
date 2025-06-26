@@ -112,14 +112,35 @@ class Api::V1::AccountsController < Api::V1::BaseController
   def sync
     @account = current_user.accounts.find(params[:id])
 
-    # TODO: Implement Plaid sync logic here
-    # For now, just update the last_sync_at timestamp
-    @account.update!(last_sync_at: Time.current)
+    # Check if account is linked to Plaid
+    unless @account.plaid_access_token.present?
+      return render json: {
+        error: "Account is not linked to Plaid",
+        suggestion: "Use the Plaid link flow to connect this account"
+      }, status: :unprocessable_entity
+    end
 
-    render json: {
-      message: "Account sync initiated",
-      account: account_response_data(@account)
-    }
+    begin
+      # Use PlaidService to sync the account
+      sync_single_account(@account)
+
+      render json: {
+        message: "Account sync completed successfully",
+        account: account_response_data(@account.reload),
+        last_sync_at: @account.last_sync_at
+      }
+    rescue PlaidError => e
+      render json: {
+        error: "Failed to sync account with Plaid",
+        details: e.message
+      }, status: :unprocessable_entity
+    rescue => e
+      Rails.logger.error "Account sync error: #{e.message}"
+      render json: {
+        error: "Sync failed due to an unexpected error",
+        details: e.message
+      }, status: :internal_server_error
+    end
   rescue ActiveRecord::RecordNotFound
     render json: {
       error: "Account not found"
@@ -134,6 +155,110 @@ class Api::V1::AccountsController < Api::V1::BaseController
     render json: {
       error: "Account not found"
     }, status: :not_found
+  end
+
+  def sync_single_account(account)
+    # Fetch recent transactions (last 30 days)
+    plaid_transactions = PlaidService.fetch_recent_transactions(account.plaid_access_token)
+
+    # Sync account balance first
+    plaid_accounts = PlaidService.fetch_accounts(account.plaid_access_token)
+    plaid_account = plaid_accounts.find { |acc| acc[:plaid_account_id] == account.plaid_account_id }
+
+    if plaid_account
+      account.update!(
+        balance_current: plaid_account[:balance_current],
+        balance_available: plaid_account[:balance_available],
+        last_sync_at: Time.current
+      )
+    end
+
+    # Create or update transactions
+    transactions_created = 0
+    transactions_updated = 0
+
+    plaid_transactions.each do |plaid_transaction|
+      # Only process transactions for this account
+      next unless plaid_transaction[:plaid_account_id] == account.plaid_account_id
+
+      transaction = account.transactions.find_or_initialize_by(
+        plaid_transaction_id: plaid_transaction[:plaid_transaction_id]
+      )
+
+      if transaction.new_record?
+        transaction.assign_attributes(
+          amount: plaid_transaction[:amount],
+          currency: plaid_transaction[:currency],
+          date: plaid_transaction[:date],
+          merchant_name: plaid_transaction[:merchant_name],
+          description: plaid_transaction[:description],
+          category: plaid_transaction[:category],
+          subcategory: plaid_transaction[:subcategory],
+          pending: plaid_transaction[:pending]
+        )
+        transaction.save!
+        transactions_created += 1
+
+        # Auto-classify new transactions
+        auto_classify_transaction(transaction)
+      else
+        # Update existing transaction (amounts, pending status might change)
+        transaction.update!(
+          amount: plaid_transaction[:amount],
+          pending: plaid_transaction[:pending]
+        )
+        transactions_updated += 1
+      end
+    end
+
+    Rails.logger.info "Synced account #{account.display_name}: #{transactions_created} created, #{transactions_updated} updated"
+  end
+
+  def auto_classify_transaction(transaction)
+    # Simple auto-classification based on description and Plaid category
+    category = find_matching_category(transaction)
+
+    if category
+      transaction.transaction_classifications.create!(
+        category: category,
+        confidence_score: 0.8, # Auto-classification confidence
+        auto_classified: true
+      )
+    end
+  end
+
+  def find_matching_category(transaction)
+    user = transaction.account.user
+
+    # Try to match by Plaid category first
+    if transaction.category.present?
+      category = user.categories.where(
+        "LOWER(name) LIKE ?",
+        "%#{transaction.category.downcase}%"
+      ).first
+      return category if category
+    end
+
+    # Try to match by description keywords
+    description_lower = transaction.description.downcase
+
+    # Common patterns for auto-classification
+    category_patterns = {
+      "gas" => [ "gas", "fuel", "chevron", "shell", "exxon" ],
+      "grocery" => [ "grocery", "market", "food", "kroger", "safeway" ],
+      "restaurant" => [ "restaurant", "cafe", "mcdonald", "starbucks" ],
+      "entertainment" => [ "movie", "theater", "netflix", "spotify" ],
+      "shopping" => [ "amazon", "target", "walmart", "store" ]
+    }
+
+    category_patterns.each do |category_name, keywords|
+      if keywords.any? { |keyword| description_lower.include?(keyword) }
+        category = user.categories.where("LOWER(name) LIKE ?", "%#{category_name}%").first
+        return category if category
+      end
+    end
+
+    nil
   end
 
   def account_params

@@ -8,8 +8,8 @@ class TransactionClassification < ApplicationRecord
   validates :transaction_id, presence: true, uniqueness: true
 
   # Scopes
-  scope :auto_classified, -> { where(is_auto_classified: true) }
-  scope :manual, -> { where(is_auto_classified: false) }
+  scope :auto_classified, -> { where(auto_classified: true) }
+  scope :manual, -> { where(auto_classified: false) }
   scope :high_confidence, -> { where("confidence_score >= ?", 0.8) }
   scope :low_confidence, -> { where("confidence_score < ?", 0.5) }
 

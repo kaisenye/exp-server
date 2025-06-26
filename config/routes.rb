@@ -52,6 +52,30 @@ Rails.application.routes.draw do
         end
       end
 
+      # Insights API
+      resources :insights, only: [ :index, :show, :destroy ] do
+        collection do
+          post :generate
+          get :types
+        end
+      end
+
+      # Dashboard API
+      namespace :dashboard do
+        get :stats
+      end
+
+      # Plaid Integration API
+      scope :plaid do
+        post :link_token, to: "plaid#create_link_token"
+        post :exchange_token, to: "plaid#exchange_token"
+        post "sync/:account_id", to: "plaid#sync_account"
+        post :sync_all, to: "plaid#sync_all_accounts"
+        get :status, to: "plaid#status"
+        post :webhook, to: "plaid#webhook"
+        post :sync_jobs, to: "plaid#schedule_sync"
+      end
+
       # Add more API endpoints here
     end
   end

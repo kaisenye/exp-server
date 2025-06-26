@@ -321,14 +321,240 @@ class Api::V1::TransactionsController < Api::V1::BaseController
   end
 
   def sync_account_transactions(account)
-    # TODO: Implement actual Plaid sync logic here
-    # For now, just update the last_sync_at timestamp
-    account.update!(last_sync_at: Time.current)
+    # Check if account is linked to Plaid
+    unless account.plaid_access_token.present?
+      Rails.logger.warn "Account #{account.display_name} is not linked to Plaid"
+      return
+    end
 
-    # In a real implementation, this would:
-    # 1. Call Plaid API to get new transactions
-    # 2. Create/update Transaction records
-    # 3. Auto-classify new transactions
-    # 4. Update account balances
+    begin
+      # Fetch recent transactions (last 30 days)
+      plaid_transactions = PlaidService.fetch_recent_transactions(account.plaid_access_token)
+
+      # Sync account balance first
+      plaid_accounts = PlaidService.fetch_accounts(account.plaid_access_token)
+      plaid_account = plaid_accounts.find { |acc| acc[:plaid_account_id] == account.plaid_account_id }
+
+      if plaid_account
+        account.update!(
+          balance_current: plaid_account[:balance_current],
+          balance_available: plaid_account[:balance_available],
+          last_sync_at: Time.current
+        )
+      end
+
+      # Create or update transactions
+      transactions_created = 0
+      transactions_updated = 0
+
+      plaid_transactions.each do |plaid_transaction|
+        # Only process transactions for this account
+        next unless plaid_transaction[:plaid_account_id] == account.plaid_account_id
+
+        transaction = account.transactions.find_or_initialize_by(
+          plaid_transaction_id: plaid_transaction[:plaid_transaction_id]
+        )
+
+        if transaction.new_record?
+          transaction.assign_attributes(
+            amount: plaid_transaction[:amount],
+            currency: plaid_transaction[:currency],
+            date: plaid_transaction[:date],
+            merchant_name: plaid_transaction[:merchant_name],
+            description: plaid_transaction[:description],
+            category: plaid_transaction[:category],
+            subcategory: plaid_transaction[:subcategory],
+            pending: plaid_transaction[:pending]
+          )
+          transaction.save!
+          transactions_created += 1
+
+          # Auto-classify new transactions
+          auto_classify_transaction(transaction)
+        else
+          # Update existing transaction (amounts, pending status might change)
+          transaction.update!(
+            amount: plaid_transaction[:amount],
+            pending: plaid_transaction[:pending]
+          )
+          transactions_updated += 1
+        end
+      end
+
+      Rails.logger.info "Synced account #{account.display_name}: #{transactions_created} created, #{transactions_updated} updated"
+    rescue PlaidError => e
+      Rails.logger.error "Failed to sync account #{account.display_name}: #{e.message}"
+      # Continue with other accounts
+    rescue => e
+      Rails.logger.error "Unexpected error syncing account #{account.display_name}: #{e.message}"
+      # Continue with other accounts
+    end
+  end
+
+  def auto_classify_transaction(transaction)
+    # Simple auto-classification based on description and Plaid category
+    category = find_matching_category(transaction)
+
+    if category
+      transaction.transaction_classifications.create!(
+        category: category,
+        confidence_score: 0.8, # Auto-classification confidence
+        auto_classified: true
+      )
+    end
+  end
+
+  def find_matching_category(transaction)
+    user = transaction.account.user
+
+    # Priority 1: Try to match by Plaid subcategory first (more specific)
+    if transaction.subcategory.present?
+      category = user.categories.where(
+        "LOWER(name) LIKE ?",
+        "%#{transaction.subcategory.downcase}%"
+      ).first
+      return category if category
+    end
+
+    # Priority 2: Try to match by Plaid category
+    if transaction.category.present?
+      category = user.categories.where(
+        "LOWER(name) LIKE ?",
+        "%#{transaction.category.downcase}%"
+      ).first
+      return category if category
+    end
+
+    # Priority 3: Enhanced keyword matching with Plaid categories
+    description_lower = transaction.description.downcase
+    plaid_category_lower = transaction.category&.downcase
+    plaid_subcategory_lower = transaction.subcategory&.downcase
+
+    # Enhanced patterns with Plaid category hints
+    category_patterns = {
+      "food" => [ "food", "dining", "restaurant", "grocery", "market", "cafe", "coffee", "mcdonald", "starbucks", "subway" ],
+      "gas" => [ "gas", "fuel", "chevron", "shell", "exxon", "bp", "mobil" ],
+      "grocery" => [ "grocery", "market", "food", "kroger", "safeway", "walmart", "target" ],
+      "transportation" => [ "uber", "lyft", "taxi", "metro", "transit", "parking", "gas", "fuel" ],
+      "entertainment" => [ "movie", "theater", "netflix", "spotify", "hulu", "amazon prime", "disney" ],
+      "shopping" => [ "amazon", "target", "walmart", "store", "shop", "purchase" ],
+      "utilities" => [ "electric", "water", "gas", "utility", "phone", "internet", "cable", "wifi" ],
+      "healthcare" => [ "hospital", "clinic", "pharmacy", "medical", "health", "doctor", "dentist" ]
+    }
+
+    # Check if Plaid category gives us hints for better matching
+    enhanced_keywords = []
+    if plaid_category_lower&.include?("food") || plaid_subcategory_lower&.include?("coffee")
+      enhanced_keywords += category_patterns["food"]
+    elsif plaid_category_lower&.include?("transportation") || plaid_subcategory_lower&.include?("gas")
+      enhanced_keywords += category_patterns["transportation"] + category_patterns["gas"]
+    elsif plaid_category_lower&.include?("shop") || plaid_subcategory_lower&.include?("general")
+      enhanced_keywords += category_patterns["shopping"]
+    end
+
+    # Try enhanced keywords first
+    if enhanced_keywords.any?
+      enhanced_keywords.each do |keyword|
+        if description_lower.include?(keyword)
+          category = user.categories.where("LOWER(name) LIKE ?", "%#{keyword}%").first ||
+                    user.categories.where("LOWER(description) LIKE ?", "%#{keyword}%").first
+          return category if category
+        end
+      end
+    end
+
+    # Fallback to original keyword patterns
+    category_patterns.each do |category_name, keywords|
+      if keywords.any? { |keyword| description_lower.include?(keyword) }
+        category = user.categories.where("LOWER(name) LIKE ?", "%#{category_name}%").first
+        return category if category
+      end
+    end
+
+    # Priority 4: Create category from Plaid data if no match found
+    if transaction.subcategory.present? || transaction.category.present?
+      category_name = transaction.subcategory || transaction.category
+
+      # Check if we should auto-create this category
+      if should_auto_create_category?(category_name, user)
+        return auto_create_plaid_category(category_name, transaction, user)
+      end
+    end
+
+    nil
+  end
+
+  # Helper method to decide if we should auto-create a category
+  def should_auto_create_category?(category_name, user)
+    # Only auto-create for common, useful categories
+    common_categories = [
+      "coffee shop", "gas stations", "groceries", "restaurants", "fast food",
+      "department stores", "pharmacies", "movie theaters", "gyms and fitness centers"
+    ]
+
+    common_categories.any? { |common| category_name.downcase.include?(common) }
+  end
+
+  # Helper method to auto-create category from Plaid data
+  def auto_create_plaid_category(category_name, transaction, user)
+    # Generate appropriate parent category
+    parent_category = find_or_create_parent_category(transaction.category, user)
+
+    # Generate color based on parent or category type
+    color = parent_category&.color || generate_category_color(category_name)
+
+    user.categories.create!(
+      name: category_name.titleize,
+      parent_category: parent_category,
+      color: color,
+      description: "Auto-created from Plaid transactions (#{transaction.category})"
+    )
+  rescue ActiveRecord::RecordInvalid
+    # If creation fails (e.g., duplicate name), try to find existing
+    user.categories.find_by(name: category_name.titleize)
+  end
+
+  # Helper method to find or create parent category
+  def find_or_create_parent_category(plaid_category, user)
+    return nil unless plaid_category.present?
+
+    # Map Plaid parent categories to user categories
+    parent_mappings = {
+      "food and drink" => "Food & Dining",
+      "transportation" => "Transportation",
+      "shops" => "Shopping",
+      "recreation and entertainment" => "Entertainment",
+      "bills and utilities" => "Bills & Utilities",
+      "healthcare" => "Health & Fitness"
+    }
+
+    parent_name = parent_mappings[plaid_category.downcase]
+    return nil unless parent_name
+
+    user.categories.find_or_create_by(name: parent_name) do |cat|
+      cat.color = generate_category_color(parent_name)
+      cat.description = "Auto-created parent category"
+    end
+  rescue ActiveRecord::RecordInvalid
+    user.categories.find_by(name: parent_name)
+  end
+
+  # Helper method to generate category colors
+  def generate_category_color(category_name)
+    color_mappings = {
+      /food|dining|restaurant|coffee|grocery/ => "#FF6B6B",
+      /transport|gas|fuel|car|uber|lyft/ => "#4ECDC4",
+      /shop|store|purchase|buy|amazon/ => "#45B7D1",
+      /entertainment|movie|music|game/ => "#96CEB4",
+      /bill|utility|electric|water|phone/ => "#FFEAA7",
+      /health|medical|pharmacy|doctor/ => "#DDA0DD"
+    }
+
+    color_mappings.each do |pattern, color|
+      return color if category_name.downcase.match?(pattern)
+    end
+
+    # Default color
+    "#95A5A6"
   end
 end
