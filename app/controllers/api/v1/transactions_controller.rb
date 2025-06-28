@@ -392,7 +392,7 @@ class Api::V1::TransactionsController < Api::V1::BaseController
   end
 
   def auto_classify_transaction(transaction)
-    # Simple auto-classification based on description and Plaid category
+    # Enhanced auto-classification based on description keywords
     category = find_matching_category(transaction)
 
     if category
@@ -401,87 +401,46 @@ class Api::V1::TransactionsController < Api::V1::BaseController
         confidence_score: 0.8, # Auto-classification confidence
         auto_classified: true
       )
+      Rails.logger.info "Auto-classified '#{transaction.description}' as '#{category.name}'"
+    else
+      Rails.logger.debug "Could not auto-classify '#{transaction.description}'"
     end
   end
 
   def find_matching_category(transaction)
     user = transaction.account.user
-
-    # Priority 1: Try to match by Plaid subcategory first (more specific)
-    if transaction.subcategory.present?
-      category = user.categories.where(
-        "LOWER(name) LIKE ?",
-        "%#{transaction.subcategory.downcase}%"
-      ).first
-      return category if category
-    end
-
-    # Priority 2: Try to match by Plaid category
-    if transaction.category.present?
-      category = user.categories.where(
-        "LOWER(name) LIKE ?",
-        "%#{transaction.category.downcase}%"
-      ).first
-      return category if category
-    end
-
-    # Priority 3: Enhanced keyword matching with Plaid categories
     description_lower = transaction.description.downcase
-    plaid_category_lower = transaction.category&.downcase
-    plaid_subcategory_lower = transaction.subcategory&.downcase
 
-    # Enhanced patterns with Plaid category hints
+    # Enhanced keyword matching with better patterns
     category_patterns = {
-      "food" => [ "food", "dining", "restaurant", "grocery", "market", "cafe", "coffee", "mcdonald", "starbucks", "subway" ],
-      "gas" => [ "gas", "fuel", "chevron", "shell", "exxon", "bp", "mobil" ],
-      "grocery" => [ "grocery", "market", "food", "kroger", "safeway", "walmart", "target" ],
-      "transportation" => [ "uber", "lyft", "taxi", "metro", "transit", "parking", "gas", "fuel" ],
-      "entertainment" => [ "movie", "theater", "netflix", "spotify", "hulu", "amazon prime", "disney" ],
-      "shopping" => [ "amazon", "target", "walmart", "store", "shop", "purchase" ],
-      "utilities" => [ "electric", "water", "gas", "utility", "phone", "internet", "cable", "wifi" ],
-      "healthcare" => [ "hospital", "clinic", "pharmacy", "medical", "health", "doctor", "dentist" ]
+      "food" => [ "starbucks", "mcdonald", "kfc", "subway", "pizza", "restaurant", "cafe", "coffee", "dining", "food", "grocery", "market" ],
+      "transportation" => [ "uber", "lyft", "taxi", "metro", "transit", "parking", "gas", "fuel", "airlines", "flight" ],
+      "entertainment" => [ "movie", "theater", "netflix", "spotify", "hulu", "climbing", "gym", "entertainment" ],
+      "shopping" => [ "amazon", "target", "walmart", "store", "shop", "bicycle", "sparkfun", "tectra" ],
+      "income" => [ "salary", "deposit", "payment", "interest", "intrst", "pymnt", "refund" ],
+      "bills" => [ "electric", "water", "utility", "phone", "internet", "cable", "credit card", "automatic payment" ]
     }
 
-    # Check if Plaid category gives us hints for better matching
-    enhanced_keywords = []
-    if plaid_category_lower&.include?("food") || plaid_subcategory_lower&.include?("coffee")
-      enhanced_keywords += category_patterns["food"]
-    elsif plaid_category_lower&.include?("transportation") || plaid_subcategory_lower&.include?("gas")
-      enhanced_keywords += category_patterns["transportation"] + category_patterns["gas"]
-    elsif plaid_category_lower&.include?("shop") || plaid_subcategory_lower&.include?("general")
-      enhanced_keywords += category_patterns["shopping"]
-    end
-
-    # Try enhanced keywords first
-    if enhanced_keywords.any?
-      enhanced_keywords.each do |keyword|
-        if description_lower.include?(keyword)
-          category = user.categories.where("LOWER(name) LIKE ?", "%#{keyword}%").first ||
-                    user.categories.where("LOWER(description) LIKE ?", "%#{keyword}%").first
-          return category if category
-        end
-      end
-    end
-
-    # Fallback to original keyword patterns
-    category_patterns.each do |category_name, keywords|
+    # Find matching category
+    category_patterns.each do |category_type, keywords|
       if keywords.any? { |keyword| description_lower.include?(keyword) }
-        category = user.categories.where("LOWER(name) LIKE ?", "%#{category_name}%").first
+        # Try to find exact match first
+        category = user.categories.find_by("LOWER(name) = ?", category_type)
+        return category if category
+
+        # Try partial match
+        category = user.categories.where("LOWER(name) LIKE ?", "%#{category_type}%").first
         return category if category
       end
     end
 
-    # Priority 4: Create category from Plaid data if no match found
-    if transaction.subcategory.present? || transaction.category.present?
-      category_name = transaction.subcategory || transaction.category
-
-      # Check if we should auto-create this category
-      if should_auto_create_category?(category_name, user)
-        return auto_create_plaid_category(category_name, transaction, user)
-      end
+    # Special handling for positive amounts (likely income)
+    if transaction.amount > 0
+      return user.categories.find_by(name: "Income")
     end
 
-    nil
+    # Default fallback for expenses
+    user.categories.find_by(name: "Shopping")
   end
 
   # Helper method to decide if we should auto-create a category

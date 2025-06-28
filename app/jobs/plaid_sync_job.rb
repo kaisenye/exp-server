@@ -18,7 +18,7 @@ class PlaidSyncJob < ApplicationJob
 
   def sync_user_accounts(user_id)
     user = User.find(user_id)
-    plaid_accounts = user.accounts.where.not(plaid_access_token: [ nil, "" ])
+    plaid_accounts = user.accounts.where.not(encrypted_plaid_access_token: [ nil, "" ])
 
     Rails.logger.info "Starting Plaid sync for user #{user.email} (#{plaid_accounts.count} accounts)"
 
@@ -50,7 +50,7 @@ class PlaidSyncJob < ApplicationJob
   end
 
   def sync_all_accounts
-    plaid_accounts = Account.where.not(plaid_access_token: [ nil, "" ])
+    plaid_accounts = Account.where.not(encrypted_plaid_access_token: [ nil, "" ])
 
     Rails.logger.info "Starting bulk Plaid sync for #{plaid_accounts.count} accounts"
 

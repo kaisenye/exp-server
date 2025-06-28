@@ -23,7 +23,7 @@ class Api::V1::DashboardController < Api::V1::BaseController
         total_accounts: accounts.count,
         recent_transactions: recent_transactions,
         account_types: account_types,
-        plaid_linked: accounts.where.not(plaid_access_token: [ nil, "" ]).count > 0
+        plaid_linked: accounts.where.not(encrypted_plaid_access_token: [ nil, "" ]).count > 0
       }
     rescue => e
       Rails.logger.error "Error fetching dashboard stats: #{e.message}"

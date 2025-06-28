@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.0].define(version: 2025_06_24_223304) do
+ActiveRecord::Schema[8.0].define(version: 2025_06_27_232941) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -20,7 +20,6 @@ ActiveRecord::Schema[8.0].define(version: 2025_06_24_223304) do
     t.string "name"
     t.string "institution_name"
     t.string "plaid_account_id"
-    t.string "plaid_access_token"
     t.decimal "balance_current"
     t.decimal "balance_available"
     t.string "currency"
@@ -32,6 +31,8 @@ ActiveRecord::Schema[8.0].define(version: 2025_06_24_223304) do
     t.string "sync_status"
     t.datetime "last_error_at"
     t.string "display_name"
+    t.text "encrypted_plaid_access_token"
+    t.string "encrypted_plaid_access_token_iv"
     t.index ["user_id"], name: "index_accounts_on_user_id"
   end
 

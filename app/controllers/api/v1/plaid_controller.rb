@@ -107,7 +107,7 @@ class Api::V1::PlaidController < Api::V1::BaseController
 
   # POST /api/v1/plaid/sync_all
   def sync_all_accounts
-    plaid_accounts = current_user.accounts.where.not(plaid_access_token: [ nil, "" ])
+    plaid_accounts = current_user.accounts.where.not(encrypted_plaid_access_token: [ nil, "" ])
 
     if plaid_accounts.empty?
       return render json: {
@@ -142,7 +142,7 @@ class Api::V1::PlaidController < Api::V1::BaseController
 
   # GET /api/v1/plaid/status
   def status
-    accounts = current_user.accounts.where.not(plaid_access_token: [ nil, "" ])
+    accounts = current_user.accounts.where.not(encrypted_plaid_access_token: [ nil, "" ])
 
     render json: {
       linked_accounts: accounts.count,
