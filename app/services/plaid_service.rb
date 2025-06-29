@@ -27,6 +27,10 @@ class PlaidService
     instance.fetch_transactions(access_token, start_date, end_date)
   end
 
+  def self.remove_item(access_token)
+    instance.remove_item(access_token)
+  end
+
   def create_link_token(user_id, products = [ "transactions" ])
     client = get_client
 
@@ -141,6 +145,17 @@ class PlaidService
   rescue => e
     Rails.logger.error "Unexpected error in fetch_transactions: #{e.message}"
     raise PlaidError, "Unexpected error during transactions fetch: #{e.message}"
+  end
+
+  def remove_item(access_token)
+    client = get_client
+    client.item.remove(access_token)
+  rescue Plaid::PlaidAPIError => e
+    Rails.logger.error "Plaid item removal failed: #{e.message}"
+    raise PlaidError, "Failed to remove item: #{e.message}"
+  rescue => e
+    Rails.logger.error "Unexpected error in remove_item: #{e.message}"
+    raise PlaidError, "Unexpected error during item removal: #{e.message}"
   end
 
   private

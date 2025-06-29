@@ -143,6 +143,49 @@ Content-Type: application/json
 **Purpose**: Schedule background sync jobs  
 **Response**: `{ "message": "Scheduled sync for your accounts", "job_type": "user" }`
 
+### Account Disconnection
+```http
+DELETE /api/v1/plaid/disconnect/:account_id
+```
+**Purpose**: Disconnect Plaid account and optionally clean up historical data  
+**Parameters**:
+- `remove_transactions` (optional): `true` to remove all historical transactions, `false` to keep them (default: `false`)
+- `remove_account` (optional): `true` to deactivate the account entirely, `false` to keep it active but disconnected (default: `false`)
+- `keep_categories` (optional): `true` to preserve transaction categories when removing transactions (default: `true`)
+
+**Usage Examples**:
+```bash
+# Basic disconnect (keeps transactions, deactivates Plaid sync only)
+DELETE /api/v1/plaid/disconnect/123
+
+# Disconnect and remove all historical transactions
+DELETE /api/v1/plaid/disconnect/123?remove_transactions=true
+
+# Disconnect, remove transactions, and deactivate the account
+DELETE /api/v1/plaid/disconnect/123?remove_transactions=true&remove_account=true
+
+# Disconnect but keep transactions (clear Plaid IDs only)
+DELETE /api/v1/plaid/disconnect/123?remove_transactions=false
+```
+
+**Response**:
+```json
+{
+  "message": "Plaid account disconnected successfully",
+  "account": {
+    "id": 123,
+    "name": "Chase - Checking",
+    "status": "disconnected"
+  },
+  "cleanup_summary": {
+    "transactions_removed": 450,
+    "classifications_removed": 380,
+    "account_deactivated": false,
+    "plaid_ids_cleared": true
+  }
+}
+```
+
 ## 🔧 Environment Configuration
 
 ### Required Environment Variables

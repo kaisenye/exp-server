@@ -74,6 +74,7 @@ Rails.application.routes.draw do
         get :status, to: "plaid#status"
         post :webhook, to: "plaid#webhook"
         post :sync_jobs, to: "plaid#schedule_sync"
+        delete "disconnect/:account_id", to: "plaid#disconnect_account"
       end
 
       # Add more API endpoints here

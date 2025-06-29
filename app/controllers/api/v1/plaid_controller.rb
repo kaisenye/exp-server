@@ -208,6 +208,82 @@ class Api::V1::PlaidController < Api::V1::BaseController
     render json: { error: "Failed to schedule sync" }, status: :internal_server_error
   end
 
+  # DELETE /api/v1/plaid/disconnect/:account_id
+  def disconnect_account
+    @account = current_user.accounts.find(params[:account_id])
+
+    # Validate that account is actually linked to Plaid
+    unless @account.plaid_access_token.present?
+      return render json: {
+        error: "Account is not linked to Plaid",
+        account_name: @account.display_name
+      }, status: :unprocessable_entity
+    end
+
+    # Parse cleanup options
+    cleanup_options = parse_cleanup_options
+
+    begin
+      ActiveRecord::Base.transaction do
+        # Step 1: Call Plaid API to invalidate the access token (if supported)
+        begin
+          PlaidService.remove_item(@account.plaid_access_token)
+          Rails.logger.info "Successfully removed item from Plaid"
+        rescue PlaidError => e
+          Rails.logger.warn "Could not remove item from Plaid: #{e.message}"
+          # Continue with local cleanup even if Plaid API call fails
+        end
+
+        # Step 2: Handle historical data based on options
+        cleanup_result = handle_historical_data_cleanup(@account, cleanup_options)
+
+        # Step 3: Clear Plaid-related fields
+        @account.update!(
+          encrypted_plaid_access_token: nil,
+          encrypted_plaid_access_token_iv: nil,
+          plaid_item_id: nil,
+          sync_status: "disconnected",
+          last_sync_at: nil,
+          last_error_at: nil
+        )
+
+        # Step 4: Update account status based on cleanup choice
+        if cleanup_options[:remove_account]
+          @account.update!(active: false)
+        end
+
+        Rails.logger.info "Successfully disconnected Plaid account: #{@account.display_name}"
+
+        render json: {
+          message: "Plaid account disconnected successfully",
+          account: {
+            id: @account.id,
+            name: @account.display_name,
+            status: @account.active? ? "disconnected" : "deactivated"
+          },
+          cleanup_summary: cleanup_result
+        }
+      end
+
+    rescue PlaidError => e
+      render json: {
+        error: "Failed to disconnect from Plaid",
+        details: e.message
+      }, status: :unprocessable_entity
+    rescue => e
+      Rails.logger.error "Error disconnecting Plaid account: #{e.message}"
+      render json: {
+        error: "Failed to disconnect account",
+        details: "An unexpected error occurred"
+      }, status: :internal_server_error
+    end
+
+  rescue ActiveRecord::RecordNotFound
+    render json: {
+      error: "Account not found"
+    }, status: :not_found
+  end
+
   private
 
   def sync_single_account(account)
@@ -408,5 +484,46 @@ class Api::V1::PlaidController < Api::V1::BaseController
   def handle_assets_webhook(code, item_id)
     # Handle assets webhooks if using Plaid Assets product
     Rails.logger.info "Assets webhook received: #{code} for item: #{item_id}"
+  end
+
+  def parse_cleanup_options
+    {
+      remove_transactions: params[:remove_transactions]&.to_s == "true",
+      remove_account: params[:remove_account]&.to_s == "true",
+      keep_categories: params[:keep_categories]&.to_s != "false" # Default to keeping categories
+    }
+  end
+
+  def handle_historical_data_cleanup(account, options)
+    result = {
+      transactions_removed: 0,
+      classifications_removed: 0,
+      account_deactivated: options[:remove_account]
+    }
+
+    if options[:remove_transactions]
+      # Count before deletion for reporting
+      transaction_count = account.transactions.count
+      classification_count = account.transactions.joins(:transaction_classifications).count
+
+      # Delete transactions (will cascade to classifications due to dependent: :destroy)
+      account.transactions.destroy_all
+
+      result[:transactions_removed] = transaction_count
+      result[:classifications_removed] = classification_count
+
+      Rails.logger.info "Removed #{transaction_count} transactions and #{classification_count} classifications for account #{account.display_name}"
+    else
+      # Keep transactions but clear Plaid-specific fields
+      account.transactions.update_all(
+        plaid_transaction_id: nil
+        # Keep other transaction data intact
+      )
+
+      result[:transactions_kept] = account.transactions.count
+      result[:plaid_ids_cleared] = true
+    end
+
+    result
   end
 end
