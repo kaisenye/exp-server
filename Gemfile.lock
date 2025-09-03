@@ -233,7 +233,12 @@ GEM
     parser (3.3.8.0)
       ast (~> 2.4.1)
       racc
-    pg (1.5.9)
+    pg (1.6.2)
+    pg (1.6.2-aarch64-linux)
+    pg (1.6.2-aarch64-linux-musl)
+    pg (1.6.2-arm64-darwin)
+    pg (1.6.2-x86_64-linux)
+    pg (1.6.2-x86_64-linux-musl)
     plaid (13.2.0)
       faraday
       faraday_middleware
@@ -437,7 +442,7 @@ DEPENDENCIES
   faraday
   jsonapi-serializer
   kamal
-  pg (~> 1.1)
+  pg (~> 1.6)
   plaid (~> 13.0)
   puma (>= 5.0)
   rack-cors
